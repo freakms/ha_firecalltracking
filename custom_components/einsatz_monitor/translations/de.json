@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Einsatz-Monitor verbinden",
+        "description": "Geben Sie die URL Ihres Einsatz-Monitors und Ihren API-Token ein.\n\nDen Token finden Sie in den Einstellungen unter 'Home Assistant'.",
+        "data": {
+          "url": "Server URL (z.B. https://mein-tracker.de)",
+          "token": "API Token (beginnt mit ha_)",
+          "poll_interval": "Abfrageintervall (Sekunden)",
+          "use_websocket": "WebSocket für Echtzeit-Updates nutzen"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen. Prüfen Sie die URL und stellen Sie sicher, dass der Server erreichbar ist.",
+      "invalid_auth": "Ungültiger oder abgelaufener Token. Bitte generieren Sie einen neuen Token im Einsatz-Monitor.",
+      "unknown": "Ein unbekannter Fehler ist aufgetreten. Bitte prüfen Sie die Logs."
+    },
+    "abort": {
+      "already_configured": "Dieser Einsatz-Monitor ist bereits konfiguriert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Benachrichtigungen konfigurieren",
+        "description": "Konfigurieren Sie automatische Benachrichtigungen bei einem Alarm.\n\nNachrichtenvorlage Variablen: {keyword}, {unit}, {vehicles}, {timestamp}",
+        "data": {
+          "enable_alexa": "🔊 Alexa Sprachausgabe aktivieren",
+          "alexa_entity": "Alexa Gerät",
+          "alexa_message": "Nachrichtenvorlage",
+          "enable_light": "💡 Licht-Alarm aktivieren",
+          "light_entities_select": "Lampen (Mehrfachauswahl)",
+          "light_color": "Farbe bei Alarm",
+          "light_duration": "Licht-Dauer in Sekunden (0 = nicht ausschalten)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "alarm_count": {
+        "name": "Einsätze (24h)"
+      },
+      "latest_keyword": {
+        "name": "Letzter Einsatz - Stichwort"
+      },
+      "latest_vehicles": {
+        "name": "Letzter Einsatz - Fahrzeuge"
+      },
+      "latest_timestamp": {
+        "name": "Letzter Einsatz - Zeit"
+      }
+    },
+    "binary_sensor": {
+      "active": {
+        "name": "Einsatz Aktiv"
+      }
+    }
+  }
+}

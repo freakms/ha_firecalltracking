@@ -1,0 +1,12 @@
+{
+  "domain": "einsatz_monitor",
+  "name": "Einsatz-Monitor",
+  "documentation": "https://github.com/your-repo/einsatz-monitor-ha",
+  "issue_tracker": "https://github.com/your-repo/einsatz-monitor-ha/issues",
+  "dependencies": [],
+  "codeowners": ["@your-username"],
+  "requirements": ["aiohttp>=3.8.0"],
+  "version": "1.0.0",
+  "config_flow": true,
+  "iot_class": "cloud_polling"
+}

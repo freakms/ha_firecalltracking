@@ -1,0 +1,62 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Einsatz-Monitor",
+        "description": "Enter the URL of your Einsatz-Monitor and your API token.\n\nYou can find the token in Settings under 'Home Assistant'.",
+        "data": {
+          "url": "Server URL (e.g. https://my-tracker.com)",
+          "token": "API Token (starts with ha_)",
+          "poll_interval": "Poll interval (seconds)",
+          "use_websocket": "Use WebSocket for real-time updates"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Connection failed. Please check the URL and ensure the server is reachable.",
+      "invalid_auth": "Invalid or expired token. Please generate a new token in Einsatz-Monitor.",
+      "unknown": "An unknown error occurred. Please check the logs."
+    },
+    "abort": {
+      "already_configured": "This Einsatz-Monitor is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Configure Notifications",
+        "description": "Configure automatic notifications on alarm.\n\nMessage template variables: {keyword}, {unit}, {vehicles}, {timestamp}",
+        "data": {
+          "enable_alexa": "🔊 Enable Alexa voice output",
+          "alexa_entity": "Alexa device",
+          "alexa_message": "Message template",
+          "enable_light": "💡 Enable light alert",
+          "light_entities_select": "Lights (multi-select)",
+          "light_color": "Alarm color",
+          "light_duration": "Light duration in seconds (0 = don't turn off)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "alarm_count": {
+        "name": "Incidents (24h)"
+      },
+      "latest_keyword": {
+        "name": "Latest Incident - Keyword"
+      },
+      "latest_vehicles": {
+        "name": "Latest Incident - Vehicles"
+      },
+      "latest_timestamp": {
+        "name": "Latest Incident - Time"
+      }
+    },
+    "binary_sensor": {
+      "active": {
+        "name": "Incident Active"
+      }
+    }
+  }
+}

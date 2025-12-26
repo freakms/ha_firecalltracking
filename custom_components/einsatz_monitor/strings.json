@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Einsatz-Monitor verbinden",
+        "description": "Geben Sie die URL Ihres Einsatz-Monitors und Ihren API-Token ein.",
+        "data": {
+          "url": "Server URL",
+          "token": "API Token",
+          "poll_interval": "Abfrageintervall (Sekunden)",
+          "use_websocket": "WebSocket für Echtzeit-Updates nutzen"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen. Prüfen Sie die URL.",
+      "invalid_auth": "Ungültiger Token.",
+      "unknown": "Ein unbekannter Fehler ist aufgetreten."
+    },
+    "abort": {
+      "already_configured": "Dieser Einsatz-Monitor ist bereits konfiguriert."
+    }
+  }
+}
