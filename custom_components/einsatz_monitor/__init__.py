@@ -209,7 +209,7 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         alexa_entity = options[CONF_ALEXA_ENTITY]
         
         try:
-            # Send the announcement
+            # Send the announcement (non-blocking for faster response)
             await self.hass.services.async_call(
                 "notify",
                 "alexa_media",
@@ -218,7 +218,7 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                     "target": alexa_entity,
                     "data": {"type": "tts"}  # Use TTS instead of announce to prevent looping
                 },
-                blocking=True,  # Wait for completion
+                blocking=False,  # Don't wait - faster response
             )
             _LOGGER.info(f"Alexa notification sent to {alexa_entity}")
             
