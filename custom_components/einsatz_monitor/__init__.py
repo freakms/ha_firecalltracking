@@ -124,6 +124,7 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         self.url = url
         self.token = token
         self.last_alarm_id = None
+        self._notified_alarm_ids = set()  # Track which alarms have been notified
     
     async def _async_update_data(self):
         """Fetch data from API."""
@@ -139,8 +140,9 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                 # Check for new alarms
                 if alarms and len(alarms) > 0:
                     latest = alarms[0]
-                    if latest.get("id") != self.last_alarm_id:
-                        self.last_alarm_id = latest.get("id")
+                    alarm_id = latest.get("id")
+                    if alarm_id != self.last_alarm_id:
+                        self.last_alarm_id = alarm_id
                         
                         alarm_data = {
                             "keyword": latest.get("keyword"),
@@ -154,8 +156,8 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                         self.hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
                         _LOGGER.info(f"New alarm: {latest.get('keyword')}")
                         
-                        # Execute configured notifications
-                        await self._handle_alarm_notifications(alarm_data)
+                        # Execute configured notifications (with alarm_id to prevent duplicates)
+                        await self._handle_alarm_notifications(alarm_data, alarm_id=alarm_id)
                 
                 return {
                     "alarms": alarms,
@@ -166,8 +168,18 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         except aiohttp.ClientError as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err
     
-    async def _handle_alarm_notifications(self, alarm_data: dict):
-        """Handle notifications based on user options."""
+    async def _handle_alarm_notifications(self, alarm_data: dict, alarm_id: str = None):
+        """Handle notifications based on user options. Prevents duplicate notifications."""
+        # Prevent duplicate notifications for the same alarm
+        if alarm_id:
+            if alarm_id in self._notified_alarm_ids:
+                _LOGGER.debug(f"Skipping duplicate notification for alarm {alarm_id}")
+                return
+            self._notified_alarm_ids.add(alarm_id)
+            # Keep only last 100 alarm IDs to prevent memory issues
+            if len(self._notified_alarm_ids) > 100:
+                self._notified_alarm_ids = set(list(self._notified_alarm_ids)[-50:])
+        
         options = self.entry.options
         
         # Alexa notification
@@ -194,18 +206,43 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
             _LOGGER.warning(f"Invalid placeholder in message template: {e}")
             message = f"Alarm: {alarm_data.get('keyword', 'Unbekannt')}"
         
+        alexa_entity = options[CONF_ALEXA_ENTITY]
+        
         try:
+            # Send the announcement
             await self.hass.services.async_call(
                 "notify",
                 "alexa_media",
                 {
                     "message": message,
-                    "target": options[CONF_ALEXA_ENTITY],
-                    "data": {"type": "announce"}
+                    "target": alexa_entity,
+                    "data": {"type": "tts"}  # Use TTS instead of announce to prevent looping
                 },
-                blocking=False,
+                blocking=True,  # Wait for completion
             )
-            _LOGGER.info(f"Alexa notification sent to {options[CONF_ALEXA_ENTITY]}")
+            _LOGGER.info(f"Alexa notification sent to {alexa_entity}")
+            
+            # Estimate message duration (roughly 80 words per minute = ~0.75 seconds per word)
+            word_count = len(message.split())
+            wait_time = max(3, word_count * 0.75 + 2)  # Minimum 3 seconds, plus buffer
+            
+            # Wait for announcement to finish, then stop playback
+            async def stop_alexa_after_delay():
+                await asyncio.sleep(wait_time)
+                try:
+                    # Stop media playback to prevent any looping
+                    await self.hass.services.async_call(
+                        "media_player",
+                        "media_stop",
+                        {"entity_id": alexa_entity},
+                        blocking=False,
+                    )
+                    _LOGGER.debug(f"Alexa stopped after {wait_time}s")
+                except Exception as e:
+                    _LOGGER.debug(f"Could not stop Alexa (may already be stopped): {e}")
+            
+            self.hass.async_create_task(stop_alexa_after_delay())
+            
         except Exception as e:
             _LOGGER.error(f"Failed to send Alexa notification: {e}")
     
@@ -283,6 +320,7 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
                         
                         if data.get("type") == "alarm":
                             alarm = data.get("data", {})
+                            alarm_id = alarm.get("id")
                             alarm_data = {
                                 "keyword": alarm.get("keyword"),
                                 "unit": alarm.get("unit"),
@@ -291,12 +329,12 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
                             }
                             
                             hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
-                            _LOGGER.info(f"WebSocket alarm: {alarm.get('keyword')}")
+                            _LOGGER.info(f"WebSocket alarm: {alarm.get('keyword')} (ID: {alarm_id})")
                             
-                            # Execute configured notifications
+                            # Execute configured notifications (with alarm_id to prevent duplicates)
                             if entry_id in hass.data.get(DOMAIN, {}):
                                 coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
-                                await coordinator._handle_alarm_notifications(alarm_data)
+                                await coordinator._handle_alarm_notifications(alarm_data, alarm_id=alarm_id)
                                 await coordinator.async_request_refresh()
                         
                         elif data.get("type") == "ping":
@@ -316,4 +354,3 @@ async def async_register_card(hass: HomeAssistant):
     # Card should be manually installed to /config/www/einsatz_monitor/
     # or will be copied by HACS automatically
     _LOGGER.info("Card should be available at /local/einsatz_monitor/einsatz-monitor-card.js")
-
