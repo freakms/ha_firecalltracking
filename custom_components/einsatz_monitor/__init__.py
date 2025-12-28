@@ -1,6 +1,7 @@
 """Einsatz-Monitor Integration for Home Assistant."""
 import asyncio
 import logging
+import json
 from datetime import timedelta
 from pathlib import Path
 
@@ -37,6 +38,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 CARD_JS_URL = "/local/einsatz_monitor/einsatz-monitor-card.js"
+AUTOMATION_ID = "einsatz_monitor_alarm_automation"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -77,6 +79,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             start_websocket(hass, entry, url, token)
         )
     
+    # Create/Update automation based on options
+    await create_or_update_automation(hass, entry)
+    
     # Listen for options updates
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     
@@ -87,6 +92,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload config entry when options change."""
+    # Update automation when options change
+    await create_or_update_automation(hass, entry)
     await hass.config_entries.async_reload(entry.entry_id)
 
 
@@ -98,6 +105,149 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id)
     
     return unload_ok
+
+
+async def create_or_update_automation(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Create or update Home Assistant automation based on user options."""
+    options = entry.options
+    
+    # Check if any automation is needed
+    enable_alexa = options.get(CONF_ENABLE_ALEXA, False)
+    enable_light = options.get(CONF_ENABLE_LIGHT, False)
+    
+    if not enable_alexa and not enable_light:
+        _LOGGER.info("No Alexa or Light actions configured - skipping automation creation")
+        return
+    
+    # Build actions list
+    actions = []
+    
+    # Alexa action
+    if enable_alexa and options.get(CONF_ALEXA_ENTITY):
+        alexa_entity = options[CONF_ALEXA_ENTITY]
+        message_template = options.get(CONF_ALEXA_MESSAGE, DEFAULT_ALEXA_MESSAGE)
+        
+        # Build message with trigger data
+        message = message_template.replace("{keyword}", "{{ trigger.event.data.keyword }}")
+        message = message.replace("{unit}", "{{ trigger.event.data.unit }}")
+        message = message.replace("{vehicles}", "{{ trigger.event.data.vehicles | default('Keine Fahrzeuge') }}")
+        message = message.replace("{timestamp}", "{{ trigger.event.data.timestamp }}")
+        
+        actions.append({
+            "service": "notify.alexa_media",
+            "data": {
+                "message": message,
+                "target": alexa_entity,
+                "data": {"type": "tts"}
+            }
+        })
+        _LOGGER.debug(f"Added Alexa action for {alexa_entity}")
+    
+    # Light action
+    light_entities = options.get(CONF_LIGHT_ENTITIES, [])
+    if enable_light and light_entities:
+        if isinstance(light_entities, str):
+            light_entities = [l.strip() for l in light_entities.split(",") if l.strip()]
+        
+        color_map = {
+            "red": [255, 0, 0],
+            "blue": [0, 0, 255],
+            "orange": [255, 165, 0],
+            "white": [255, 255, 255]
+        }
+        color = color_map.get(options.get(CONF_LIGHT_COLOR, "red"), [255, 0, 0])
+        duration = options.get(CONF_LIGHT_DURATION, DEFAULT_LIGHT_DURATION)
+        
+        # Turn on lights
+        actions.append({
+            "service": "light.turn_on",
+            "target": {"entity_id": light_entities},
+            "data": {
+                "rgb_color": color,
+                "brightness": 255
+            }
+        })
+        
+        # Add delay and turn off if duration > 0
+        if duration > 0:
+            actions.append({
+                "delay": {"seconds": duration}
+            })
+            actions.append({
+                "service": "light.turn_off",
+                "target": {"entity_id": light_entities}
+            })
+        
+        _LOGGER.debug(f"Added Light action for {light_entities}, duration: {duration}s")
+    
+    if not actions:
+        _LOGGER.info("No valid actions configured")
+        return
+    
+    # Build automation config
+    automation_config = {
+        "id": AUTOMATION_ID,
+        "alias": "Einsatz-Monitor Alarm",
+        "description": "Automatisch erstellt von der Einsatz-Monitor Integration. Wird bei jedem Speichern der Optionen aktualisiert.",
+        "trigger": [
+            {
+                "platform": "event",
+                "event_type": EVENT_NEW_ALARM
+            }
+        ],
+        "condition": [],
+        "action": actions,
+        "mode": "single"
+    }
+    
+    try:
+        # Try to delete existing automation first
+        try:
+            await hass.services.async_call(
+                "automation",
+                "delete",
+                {"entity_id": f"automation.{AUTOMATION_ID}"},
+                blocking=True
+            )
+            _LOGGER.debug("Deleted existing automation")
+        except Exception:
+            pass  # Automation may not exist
+        
+        # Create automation via config file
+        automations_path = Path(hass.config.path("automations.yaml"))
+        
+        # Read existing automations
+        existing_automations = []
+        if automations_path.exists():
+            content = await hass.async_add_executor_job(automations_path.read_text)
+            if content.strip():
+                import yaml
+                try:
+                    existing_automations = yaml.safe_load(content) or []
+                    if not isinstance(existing_automations, list):
+                        existing_automations = [existing_automations]
+                except Exception as e:
+                    _LOGGER.warning(f"Could not parse automations.yaml: {e}")
+                    existing_automations = []
+        
+        # Remove old einsatz monitor automation
+        existing_automations = [a for a in existing_automations if a.get("id") != AUTOMATION_ID]
+        
+        # Add new automation
+        existing_automations.append(automation_config)
+        
+        # Write back
+        import yaml
+        yaml_content = yaml.dump(existing_automations, default_flow_style=False, allow_unicode=True)
+        await hass.async_add_executor_job(automations_path.write_text, yaml_content)
+        
+        # Reload automations
+        await hass.services.async_call("automation", "reload", blocking=True)
+        
+        _LOGGER.info(f"Created/Updated automation '{AUTOMATION_ID}' with {len(actions)} actions")
+        
+    except Exception as e:
+        _LOGGER.error(f"Failed to create automation: {e}")
 
 
 class EinsatzMonitorCoordinator(DataUpdateCoordinator):
@@ -152,12 +302,15 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                             "tenant_name": latest.get("tenant_name"),
                         }
                         
-                        # Fire event for new alarm
-                        self.hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
-                        _LOGGER.info(f"New alarm: {latest.get('keyword')}")
-                        
-                        # Execute configured notifications (with alarm_id to prevent duplicates)
-                        await self._handle_alarm_notifications(alarm_data, alarm_id=alarm_id)
+                        # Fire event for new alarm (automation will handle it)
+                        if alarm_id not in self._notified_alarm_ids:
+                            self.hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
+                            self._notified_alarm_ids.add(alarm_id)
+                            _LOGGER.info(f"New alarm event fired: {latest.get('keyword')}")
+                            
+                            # Cleanup old IDs
+                            if len(self._notified_alarm_ids) > 100:
+                                self._notified_alarm_ids = set(list(self._notified_alarm_ids)[-50:])
                 
                 return {
                     "alarms": alarms,
@@ -167,139 +320,6 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                 
         except aiohttp.ClientError as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err
-    
-    async def _handle_alarm_notifications(self, alarm_data: dict, alarm_id: str = None):
-        """Handle notifications based on user options. Prevents duplicate notifications."""
-        # Prevent duplicate notifications for the same alarm
-        if alarm_id:
-            if alarm_id in self._notified_alarm_ids:
-                _LOGGER.debug(f"Skipping duplicate notification for alarm {alarm_id}")
-                return
-            self._notified_alarm_ids.add(alarm_id)
-            # Keep only last 100 alarm IDs to prevent memory issues
-            if len(self._notified_alarm_ids) > 100:
-                self._notified_alarm_ids = set(list(self._notified_alarm_ids)[-50:])
-        
-        options = self.entry.options
-        
-        # Alexa notification
-        if options.get(CONF_ENABLE_ALEXA) and options.get(CONF_ALEXA_ENTITY):
-            await self._send_alexa_notification(alarm_data, options)
-        
-        # Light alert - now supports multiple lights
-        light_entities = options.get(CONF_LIGHT_ENTITIES, [])
-        if options.get(CONF_ENABLE_LIGHT) and light_entities:
-            await self._activate_light_alert(options)
-    
-    async def _send_alexa_notification(self, alarm_data: dict, options: dict):
-        """Send Alexa voice notification."""
-        message_template = options.get(CONF_ALEXA_MESSAGE, DEFAULT_ALEXA_MESSAGE)
-        
-        try:
-            message = message_template.format(
-                keyword=alarm_data.get("keyword", "Unbekannt"),
-                unit=alarm_data.get("unit", ""),
-                vehicles=alarm_data.get("vehicles", "Keine Fahrzeuge"),
-                timestamp=alarm_data.get("timestamp", "")
-            )
-        except KeyError as e:
-            _LOGGER.warning(f"Invalid placeholder in message template: {e}")
-            message = f"Alarm: {alarm_data.get('keyword', 'Unbekannt')}"
-        
-        alexa_entity = options[CONF_ALEXA_ENTITY]
-        
-        try:
-            # Send the announcement (non-blocking for faster response)
-            await self.hass.services.async_call(
-                "notify",
-                "alexa_media",
-                {
-                    "message": message,
-                    "target": alexa_entity,
-                    "data": {"type": "tts"}  # Use TTS instead of announce to prevent looping
-                },
-                blocking=False,  # Don't wait - faster response
-            )
-            _LOGGER.info(f"Alexa notification sent to {alexa_entity}")
-            
-            # Estimate message duration (roughly 80 words per minute = ~0.75 seconds per word)
-            word_count = len(message.split())
-            wait_time = max(3, word_count * 0.75 + 2)  # Minimum 3 seconds, plus buffer
-            
-            # Wait for announcement to finish, then stop playback
-            async def stop_alexa_after_delay():
-                await asyncio.sleep(wait_time)
-                try:
-                    # Stop media playback to prevent any looping
-                    await self.hass.services.async_call(
-                        "media_player",
-                        "media_stop",
-                        {"entity_id": alexa_entity},
-                        blocking=False,
-                    )
-                    _LOGGER.debug(f"Alexa stopped after {wait_time}s")
-                except Exception as e:
-                    _LOGGER.debug(f"Could not stop Alexa (may already be stopped): {e}")
-            
-            self.hass.async_create_task(stop_alexa_after_delay())
-            
-        except Exception as e:
-            _LOGGER.error(f"Failed to send Alexa notification: {e}")
-    
-    async def _activate_light_alert(self, options: dict):
-        """Activate light alert for multiple lights with optional auto-off timer."""
-        color_map = {
-            "red": [255, 0, 0],
-            "blue": [0, 0, 255],
-            "orange": [255, 165, 0],
-            "white": [255, 255, 255]
-        }
-        color = color_map.get(options.get(CONF_LIGHT_COLOR, "red"), [255, 0, 0])
-        
-        # Get light entities (can be list or string)
-        light_entities = options.get(CONF_LIGHT_ENTITIES, [])
-        if isinstance(light_entities, str):
-            light_entities = [l.strip() for l in light_entities.split(",") if l.strip()]
-        
-        if not light_entities:
-            return
-        
-        # Get duration (0 = never turn off)
-        duration = options.get(CONF_LIGHT_DURATION, DEFAULT_LIGHT_DURATION)
-        
-        try:
-            # Turn on all lights
-            await self.hass.services.async_call(
-                "light",
-                "turn_on",
-                {
-                    "entity_id": light_entities,
-                    "rgb_color": color,
-                    "brightness": 255,
-                },
-                blocking=False,
-            )
-            _LOGGER.info(f"Light alert activated for {len(light_entities)} lights: {light_entities}")
-            
-            # Schedule turn off if duration > 0
-            if duration > 0:
-                async def turn_off_lights():
-                    await asyncio.sleep(duration)
-                    try:
-                        await self.hass.services.async_call(
-                            "light",
-                            "turn_off",
-                            {"entity_id": light_entities},
-                            blocking=False,
-                        )
-                        _LOGGER.info(f"Light alert deactivated after {duration}s")
-                    except Exception as e:
-                        _LOGGER.error(f"Failed to turn off lights: {e}")
-                
-                self.hass.async_create_task(turn_off_lights())
-                
-        except Exception as e:
-            _LOGGER.error(f"Failed to activate light alert: {e}")
 
 
 async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, token: str):
@@ -307,6 +327,7 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
     ws_url = url.replace("https://", "wss://").replace("http://", "ws://")
     ws_url = f"{ws_url}/api/ha/ws/{token}"
     entry_id = entry.entry_id
+    notified_ids = set()
     
     while True:
         try:
@@ -321,6 +342,11 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
                         if data.get("type") == "alarm":
                             alarm = data.get("data", {})
                             alarm_id = alarm.get("id")
+                            
+                            # Prevent duplicates
+                            if alarm_id and alarm_id in notified_ids:
+                                continue
+                            
                             alarm_data = {
                                 "keyword": alarm.get("keyword"),
                                 "unit": alarm.get("unit"),
@@ -328,13 +354,18 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
                                 "timestamp": alarm.get("timestamp"),
                             }
                             
+                            # Fire event (automation will handle it)
                             hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
-                            _LOGGER.info(f"WebSocket alarm: {alarm.get('keyword')} (ID: {alarm_id})")
+                            _LOGGER.info(f"WebSocket alarm event fired: {alarm.get('keyword')} (ID: {alarm_id})")
                             
-                            # Execute configured notifications (with alarm_id to prevent duplicates)
+                            if alarm_id:
+                                notified_ids.add(alarm_id)
+                                if len(notified_ids) > 100:
+                                    notified_ids = set(list(notified_ids)[-50:])
+                            
+                            # Refresh coordinator data
                             if entry_id in hass.data.get(DOMAIN, {}):
                                 coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
-                                await coordinator._handle_alarm_notifications(alarm_data, alarm_id=alarm_id)
                                 await coordinator.async_request_refresh()
                         
                         elif data.get("type") == "ping":
@@ -351,6 +382,4 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
 
 async def async_register_card(hass: HomeAssistant):
     """Register the custom Lovelace card."""
-    # Card should be manually installed to /config/www/einsatz_monitor/
-    # or will be copied by HACS automatically
     _LOGGER.info("Card should be available at /local/einsatz_monitor/einsatz-monitor-card.js")
