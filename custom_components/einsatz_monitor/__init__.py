@@ -1,27 +1,3 @@
-Das ist ein kritischer Fehler! Die Datei-Schreiboperation könnte das Problem verursacht haben. 
-
-**Sofortige Lösung:**
-
-1. **Zugriff auf HA-Dateien** - Haben Sie SSH oder Samba/File-Zugriff auf Home Assistant?
-
-2. **Prüfen Sie `automations.yaml`:**
-   ```bash
-   cat /config/automations.yaml
-   ```
-   
-   Oder über das File Editor Add-on in HA (falls noch erreichbar)
-
-3. **Falls die Datei korrupt ist, löschen Sie den Inhalt:**
-   ```bash
-   echo "[]" > /config/automations.yaml
-   ```
-
-4. **Starten Sie HA neu**
-
----
-
-**Ich werde die Integration umschreiben, ohne in Dateien zu schreiben:**
-Action: file_editor create /app/firecall-tracker-hosting-mariadb/hacs_integration/custom_components/einsatz_monitor/__init__.py --file-text "\"\"\"Einsatz-Monitor Integration for Home Assistant.\"\"\"
 import asyncio
 import logging
 from datetime import timedelta
