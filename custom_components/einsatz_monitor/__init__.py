@@ -426,6 +426,11 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
 async def async_register_card(hass: HomeAssistant):
     """Register the custom Lovelace card automatically."""
     
+    # Check if already registered (for reload scenarios)
+    if hasattr(hass.data.get(DOMAIN, {}), '_card_registered'):
+        _LOGGER.debug("Card already registered, skipping")
+        return
+    
     # Register the static path for the card JS file
     card_path = CARD_DIR / CARD_FILENAME
     
@@ -453,8 +458,12 @@ async def async_register_card(hass: HomeAssistant):
             _LOGGER.warning(f"Could not register static path. Manual setup required: {CARD_URL_PATH}")
             return
     except Exception as e:
-        _LOGGER.warning(f"Error registering static path: {e}")
-        return
+        # If already registered, that's fine - just log and continue
+        if "already registered" in str(e).lower():
+            _LOGGER.debug(f"Static path already registered: {CARD_URL_PATH}")
+        else:
+            _LOGGER.warning(f"Error registering static path: {e}")
+        # Don't return - continue with Lovelace resource registration
     
     # Schedule resource registration after HA is fully started
     async def _async_register_lovelace_resource(_event=None):
