@@ -389,60 +389,90 @@ async def async_register_card(hass: HomeAssistant):
     # Register the static path for the card JS file
     card_path = CARD_DIR / CARD_FILENAME
     
-    if card_path.exists():
-        # Register static path so the file is accessible via HTTP
-        # Use the newer async_register_static_paths method
+    if not card_path.exists():
+        _LOGGER.error(f"Card file not found: {card_path}")
+        return
+    
+    # Register static path so the file is accessible via HTTP
+    try:
+        from homeassistant.components.http import StaticPathConfig
+        await hass.http.async_register_static_paths([
+            StaticPathConfig(CARD_URL_PATH, str(card_path), cache_headers=False)
+        ])
+        _LOGGER.info(f"Registered card static path at {CARD_URL_PATH}")
+    except ImportError:
+        # Fallback for older HA versions
         try:
-            from homeassistant.components.http import StaticPathConfig
-            await hass.http.async_register_static_paths([
-                StaticPathConfig(CARD_URL_PATH, str(card_path), cache_headers=False)
-            ])
-            _LOGGER.info(f"Registered card static path at {CARD_URL_PATH}")
-        except ImportError:
-            # Fallback for older HA versions
-            try:
-                hass.http.register_static_path(
-                    CARD_URL_PATH,
-                    str(card_path),
-                    cache_headers=False
-                )
-                _LOGGER.info(f"Registered card static path at {CARD_URL_PATH} (legacy)")
-            except AttributeError:
-                _LOGGER.warning(f"Could not register static path. Manual setup required: {CARD_URL_PATH}")
-        except Exception as e:
-            _LOGGER.warning(f"Error registering static path: {e}")
-        
-        # Try to add the resource to Lovelace automatically
+            hass.http.register_static_path(
+                CARD_URL_PATH,
+                str(card_path),
+                cache_headers=False
+            )
+            _LOGGER.info(f"Registered card static path at {CARD_URL_PATH} (legacy)")
+        except AttributeError:
+            _LOGGER.warning(f"Could not register static path. Manual setup required: {CARD_URL_PATH}")
+            return
+    except Exception as e:
+        _LOGGER.warning(f"Error registering static path: {e}")
+        return
+    
+    # Schedule resource registration after HA is fully started
+    async def _async_register_lovelace_resource(_event=None):
+        """Register the Lovelace resource after HA start."""
         try:
-            # Import here to avoid issues if lovelace is not loaded
+            from homeassistant.components.lovelace import DOMAIN as LOVELACE_DOMAIN
             from homeassistant.components.lovelace.resources import ResourceStorageCollection
             
-            # Check if lovelace resources are available
-            if "lovelace" in hass.data:
-                resources = hass.data["lovelace"].get("resources")
-                if resources and isinstance(resources, ResourceStorageCollection):
-                    # Check if resource already exists
-                    existing = [
-                        r for r in resources.async_items() 
-                        if CARD_FILENAME in r.get("url", "")
-                    ]
-                    
-                    if not existing:
-                        await resources.async_create_item({
-                            "url": CARD_URL_PATH,
-                            "res_type": "module"
-                        })
-                        _LOGGER.info(f"Added Lovelace resource: {CARD_URL_PATH}")
-                    else:
-                        _LOGGER.debug("Card resource already registered")
+            # Wait a bit for lovelace to fully initialize
+            await asyncio.sleep(2)
+            
+            if LOVELACE_DOMAIN not in hass.data:
+                _LOGGER.warning(f"Lovelace not available. Please add resource manually: {CARD_URL_PATH}")
+                return
+            
+            lovelace_data = hass.data[LOVELACE_DOMAIN]
+            resources = lovelace_data.get("resources")
+            
+            if not resources or not isinstance(resources, ResourceStorageCollection):
+                _LOGGER.info(f"Lovelace resources not available. Add manually: {CARD_URL_PATH}")
+                return
+            
+            # Check if resource already exists (check for filename in any URL)
+            existing = [
+                r for r in resources.async_items() 
+                if CARD_FILENAME in r.get("url", "")
+            ]
+            
+            if existing:
+                # Check if it's the correct URL (without /local/)
+                correct_url = [r for r in existing if r.get("url", "").startswith("/einsatz_monitor/")]
+                if correct_url:
+                    _LOGGER.debug("Card resource already correctly registered")
+                    return
                 else:
-                    _LOGGER.info(f"Add this resource manually in Lovelace: {CARD_URL_PATH}")
-            else:
-                _LOGGER.info(f"Lovelace not yet loaded. Add resource manually: {CARD_URL_PATH}")
-        except ImportError:
+                    _LOGGER.warning(f"Card resource exists with wrong URL. Please update to: {CARD_URL_PATH}")
+                    return
+            
+            # Add the resource
+            await resources.async_create_item({
+                "url": CARD_URL_PATH,
+                "res_type": "module"
+            })
+            _LOGGER.info(f"Successfully added Lovelace resource: {CARD_URL_PATH}")
+            
+        except ImportError as e:
+            _LOGGER.debug(f"Lovelace import error: {e}")
             _LOGGER.info(f"Please manually add Lovelace resource: {CARD_URL_PATH}")
         except Exception as e:
             _LOGGER.warning(f"Could not auto-register Lovelace resource: {e}")
             _LOGGER.info(f"Please manually add resource: {CARD_URL_PATH}")
+    
+    # Register to run after HA is fully started
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+    
+    if hass.is_running:
+        # HA already running, register now
+        hass.async_create_task(_async_register_lovelace_resource())
     else:
-        _LOGGER.error(f"Card file not found: {card_path}")
+        # Wait for HA to start
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _async_register_lovelace_resource)
