@@ -75,10 +75,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "token": token,
     }
     
-    # Start WebSocket if enabled
+    # Start WebSocket if enabled - run in background, don't block
     if use_websocket:
-        hass.async_create_task(
-            start_websocket(hass, entry, url, token)
+        # Use entry.async_create_background_task for proper lifecycle management
+        entry.async_create_background_task(
+            hass,
+            _start_websocket_background(hass, entry, url, token),
+            f"einsatz_monitor_websocket_{entry.entry_id}"
         )
     
     # Listen for options updates
@@ -325,35 +328,32 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
             _LOGGER.error(f"Failed to activate light alert: {e}")
 
 
+async def _start_websocket_background(hass: HomeAssistant, entry: ConfigEntry, url: str, token: str):
+    """Wrapper to start WebSocket in background without blocking."""
+    # Wait for HA to be fully running before attempting connection
+    await asyncio.sleep(10)  # Give HA time to fully start
+    await start_websocket(hass, entry, url, token)
+
+
 async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, token: str):
     """Start WebSocket connection for real-time updates."""
     ws_url = url.replace("https://", "wss://").replace("http://", "ws://")
     ws_url = f"{ws_url}/api/ha/ws/{token}"
     entry_id = entry.entry_id
     notified_ids = set()
+    retry_count = 0
+    max_retries = 5  # Stop trying after 5 consecutive failures
     
-    # Wait for HA to be fully started before connecting
-    if not hass.is_running:
-        from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-        start_event = asyncio.Event()
-        
-        def on_start(_event):
-            start_event.set()
-        
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, on_start)
-        
-        try:
-            await asyncio.wait_for(start_event.wait(), timeout=120)
-        except asyncio.TimeoutError:
-            _LOGGER.warning("Timeout waiting for HA start, starting WebSocket anyway")
-    
-    while True:
+    while retry_count < max_retries:
         try:
             session = async_get_clientsession(hass)
+            
+            # Use a short timeout for connection
             async with async_timeout.timeout(10):
                 ws = await session.ws_connect(ws_url)
             
             _LOGGER.info("WebSocket connected to Einsatz-Monitor")
+            retry_count = 0  # Reset on successful connection
             
             async for msg in ws:
                 if msg.type == aiohttp.WSMsgType.TEXT:
@@ -395,13 +395,32 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
                     break
                     
         except asyncio.TimeoutError:
-            _LOGGER.warning(f"WebSocket connection timeout. Reconnecting in 30s...")
+            retry_count += 1
+            _LOGGER.warning(f"WebSocket connection timeout ({retry_count}/{max_retries}). Retrying in 60s...")
+        except aiohttp.ClientResponseError as err:
+            if err.status == 404:
+                _LOGGER.error(f"WebSocket endpoint not found (404). WebSocket disabled. URL: {ws_url}")
+                _LOGGER.info("The backend server may not support WebSocket. Polling will still work.")
+                return  # Stop trying - endpoint doesn't exist
+            retry_count += 1
+            _LOGGER.warning(f"WebSocket HTTP error {err.status} ({retry_count}/{max_retries}). Retrying in 60s...")
         except aiohttp.ClientError as err:
-            _LOGGER.warning(f"WebSocket connection error: {err}. Reconnecting in 30s...")
+            retry_count += 1
+            if "404" in str(err):
+                _LOGGER.error(f"WebSocket endpoint not found (404). WebSocket disabled.")
+                _LOGGER.info("The backend server may not support WebSocket. Polling will still work.")
+                return  # Stop trying
+            _LOGGER.warning(f"WebSocket connection error ({retry_count}/{max_retries}): {err}. Retrying in 60s...")
         except Exception as err:
-            _LOGGER.warning(f"WebSocket error: {err}. Reconnecting in 30s...")
+            retry_count += 1
+            _LOGGER.warning(f"WebSocket error ({retry_count}/{max_retries}): {err}. Retrying in 60s...")
         
-        await asyncio.sleep(30)
+        if retry_count >= max_retries:
+            _LOGGER.error(f"WebSocket failed after {max_retries} attempts. Disabling WebSocket.")
+            _LOGGER.info("Polling mode will continue to work for alarm updates.")
+            return
+        
+        await asyncio.sleep(60)  # Wait 60 seconds between retries
 
 
 async def async_register_card(hass: HomeAssistant):
