@@ -1,7 +1,9 @@
 """Einsatz-Monitor Integration for Home Assistant."""
 import asyncio
 import logging
+import os
 from datetime import timedelta
+from pathlib import Path
 
 import aiohttp
 import async_timeout
@@ -35,7 +37,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-CARD_JS_URL = "/local/einsatz_monitor/einsatz-monitor-card.js"
+# Card paths
+CARD_DIR = Path(__file__).parent / "www"
+CARD_FILENAME = "einsatz-monitor-card.js"
+CARD_URL_PATH = f"/einsatz_monitor/{CARD_FILENAME}"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -379,5 +384,51 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
 
 
 async def async_register_card(hass: HomeAssistant):
-    """Register the custom Lovelace card."""
-    _LOGGER.info("Card should be available at /local/einsatz_monitor/einsatz-monitor-card.js")
+    """Register the custom Lovelace card automatically."""
+    
+    # Register the static path for the card JS file
+    card_path = CARD_DIR / CARD_FILENAME
+    
+    if card_path.exists():
+        # Register static path so the file is accessible via HTTP
+        hass.http.register_static_path(
+            CARD_URL_PATH,
+            str(card_path),
+            cache_headers=False  # Disable caching during development
+        )
+        _LOGGER.info(f"Registered card static path at {CARD_URL_PATH}")
+        
+        # Try to add the resource to Lovelace automatically
+        try:
+            # Import here to avoid issues if lovelace is not loaded
+            from homeassistant.components.lovelace.resources import ResourceStorageCollection
+            
+            # Check if lovelace resources are available
+            if "lovelace" in hass.data:
+                resources = hass.data["lovelace"].get("resources")
+                if resources and isinstance(resources, ResourceStorageCollection):
+                    # Check if resource already exists
+                    existing = [
+                        r for r in resources.async_items() 
+                        if CARD_FILENAME in r.get("url", "")
+                    ]
+                    
+                    if not existing:
+                        await resources.async_create_item({
+                            "url": CARD_URL_PATH,
+                            "res_type": "module"
+                        })
+                        _LOGGER.info(f"Added Lovelace resource: {CARD_URL_PATH}")
+                    else:
+                        _LOGGER.debug("Card resource already registered")
+                else:
+                    _LOGGER.info(f"Add this resource manually in Lovelace: {CARD_URL_PATH}")
+            else:
+                _LOGGER.info(f"Lovelace not yet loaded. Add resource manually: {CARD_URL_PATH}")
+        except ImportError:
+            _LOGGER.info(f"Please manually add Lovelace resource: {CARD_URL_PATH}")
+        except Exception as e:
+            _LOGGER.warning(f"Could not auto-register Lovelace resource: {e}")
+            _LOGGER.info(f"Please manually add resource: {CARD_URL_PATH}")
+    else:
+        _LOGGER.error(f"Card file not found: {card_path}")
