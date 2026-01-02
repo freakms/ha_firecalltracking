@@ -1,7 +1,7 @@
 /**
  * Einsatz-Monitor Card for Home Assistant
  * Displays the last 5 incidents with color-coded rows
- * Version: 1.1.0
+ * Version: 1.3.0
  */
 
 class EinsatzMonitorCard extends HTMLElement {
@@ -110,7 +110,7 @@ class EinsatzMonitorCard extends HTMLElement {
       cardContent = `
         <div style="padding: 20px; text-align: center; color: #6b7280;">
           <ha-icon icon="mdi:check-circle" style="--mdc-icon-size: 48px; color: #10b981;"></ha-icon>
-          <p style="margin-top: 10px;">Keine Einsätze in den letzten 24 Stunden</p>
+          <p style="margin-top: 10px;">Keine Einsätze vorhanden</p>
         </div>
       `;
     } else {
@@ -189,7 +189,7 @@ window.customCards.push({
   description: 'Zeigt die letzten Einsätze mit farblicher Kennzeichnung'
 });
 
-console.info('%c EINSATZ-MONITOR-CARD %c v1.1.0 ', 
+console.info('%c EINSATZ-MONITOR-CARD %c v1.3.0 ', 
   'background: #ef4444; color: white; font-weight: bold;', 
   'background: #333; color: white;'
 );
