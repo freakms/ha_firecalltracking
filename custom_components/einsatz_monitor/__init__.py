@@ -391,12 +391,26 @@ async def async_register_card(hass: HomeAssistant):
     
     if card_path.exists():
         # Register static path so the file is accessible via HTTP
-        hass.http.register_static_path(
-            CARD_URL_PATH,
-            str(card_path),
-            cache_headers=False  # Disable caching during development
-        )
-        _LOGGER.info(f"Registered card static path at {CARD_URL_PATH}")
+        # Use the newer async_register_static_paths method
+        try:
+            from homeassistant.components.http import StaticPathConfig
+            await hass.http.async_register_static_paths([
+                StaticPathConfig(CARD_URL_PATH, str(card_path), cache_headers=False)
+            ])
+            _LOGGER.info(f"Registered card static path at {CARD_URL_PATH}")
+        except ImportError:
+            # Fallback for older HA versions
+            try:
+                hass.http.register_static_path(
+                    CARD_URL_PATH,
+                    str(card_path),
+                    cache_headers=False
+                )
+                _LOGGER.info(f"Registered card static path at {CARD_URL_PATH} (legacy)")
+            except AttributeError:
+                _LOGGER.warning(f"Could not register static path. Manual setup required: {CARD_URL_PATH}")
+        except Exception as e:
+            _LOGGER.warning(f"Error registering static path: {e}")
         
         # Try to add the resource to Lovelace automatically
         try:
