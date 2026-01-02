@@ -25,7 +25,7 @@
     "step": {
       "init": {
         "title": "Benachrichtigungen konfigurieren",
-        "description": "Konfigurieren Sie automatische Benachrichtigungen bei einem Alarm.\n\nNachrichtenvorlage Variablen: {keyword}, {unit}, {vehicles}, {timestamp}",
+        "description": "Konfigurieren Sie automatische Benachrichtigungen bei einem Alarm.\n\nNachrichtenvorlage Variablen: '{'keyword'}', '{'unit'}', '{'vehicles'}', '{'timestamp'}'",
         "data": {
           "enable_alexa": "🔊 Alexa Sprachausgabe aktivieren",
           "alexa_entity": "Alexa Gerät",
