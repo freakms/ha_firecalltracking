@@ -1,33 +1,32 @@
 /**
  * Einsatz-Monitor Card for Home Assistant
  * Displays the last 5 incidents with color-coded rows
- * Version: 1.3.0
+ * Version: 1.3.2
  */
 
 class EinsatzMonitorCard extends HTMLElement {
   
-  constructor() {
-    super();
-    this._config = {};
-    this._hass = null;
-  }
-
   // Called by Home Assistant when config changes
   setConfig(config) {
-    this._config = config || {};
+    if (!config) {
+      throw new Error('Ungültige Konfiguration');
+    }
     
-    // Set default entity if not provided
-    if (!this._config.entity) {
-      this._config.entity = 'sensor.letzte_einsatze';
-    }
-    if (!this._config.title) {
-      this._config.title = 'Letzte Einsätze';
-    }
+    // Use Object.assign to properly handle HA's frozen config object
+    // This is the recommended pattern for HA 0.106+
+    const defaultConfig = {
+      entity: 'sensor.letzte_einsatze',
+      title: 'Letzte Einsätze'
+    };
+    
+    Object.assign(this, { 
+      config: Object.assign({}, defaultConfig, config) 
+    });
   }
 
   // Called by Home Assistant with state updates
   set hass(hass) {
-    this._hass = hass;
+    Object.assign(this, { _hass: hass });
     this._render();
   }
 
@@ -84,8 +83,8 @@ class EinsatzMonitorCard extends HTMLElement {
   _render() {
     if (!this._hass) return;
 
-    const entityId = this._config.entity || 'sensor.letzte_einsatze';
-    const title = this._config.title || 'Letzte Einsätze';
+    const entityId = this.config.entity || 'sensor.letzte_einsatze';
+    const title = this.config.title || 'Letzte Einsätze';
     const stateObj = this._hass.states[entityId];
 
     // Entity not found
@@ -189,7 +188,7 @@ window.customCards.push({
   description: 'Zeigt die letzten Einsätze mit farblicher Kennzeichnung'
 });
 
-console.info('%c EINSATZ-MONITOR-CARD %c v1.3.0 ', 
+console.info('%c EINSATZ-MONITOR-CARD %c v1.3.2 ', 
   'background: #ef4444; color: white; font-weight: bold;', 
   'background: #333; color: white;'
 );
