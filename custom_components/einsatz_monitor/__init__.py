@@ -332,51 +332,72 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
     entry_id = entry.entry_id
     notified_ids = set()
     
+    # Wait for HA to be fully started before connecting
+    if not hass.is_running:
+        from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+        start_event = asyncio.Event()
+        
+        def on_start(_event):
+            start_event.set()
+        
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, on_start)
+        
+        try:
+            await asyncio.wait_for(start_event.wait(), timeout=120)
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Timeout waiting for HA start, starting WebSocket anyway")
+    
     while True:
         try:
             session = async_get_clientsession(hass)
-            async with session.ws_connect(ws_url) as ws:
-                _LOGGER.info("WebSocket connected to Einsatz-Monitor")
-                
-                async for msg in ws:
-                    if msg.type == aiohttp.WSMsgType.TEXT:
-                        data = msg.json()
-                        
-                        if data.get("type") == "alarm":
-                            alarm = data.get("data", {})
-                            alarm_id = alarm.get("id")
-                            
-                            if alarm_id and alarm_id in notified_ids:
-                                continue
-                            
-                            alarm_data = {
-                                "keyword": alarm.get("keyword"),
-                                "unit": alarm.get("unit"),
-                                "vehicles": alarm.get("vehicles"),
-                                "timestamp": alarm.get("timestamp"),
-                            }
-                            
-                            # Fire event
-                            hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
-                            _LOGGER.info(f"WebSocket alarm event fired: {alarm.get('keyword')}")
-                            
-                            # Handle notifications
-                            if entry_id in hass.data.get(DOMAIN, {}):
-                                coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
-                                await coordinator._handle_alarm_notifications(alarm_data, alarm_id)
-                                await coordinator.async_request_refresh()
-                            
-                            if alarm_id:
-                                notified_ids.add(alarm_id)
-                                if len(notified_ids) > 100:
-                                    notified_ids = set(list(notified_ids)[-50:])
-                        
-                        elif data.get("type") == "ping":
-                            await ws.send_str("pong")
+            async with async_timeout.timeout(10):
+                ws = await session.ws_connect(ws_url)
+            
+            _LOGGER.info("WebSocket connected to Einsatz-Monitor")
+            
+            async for msg in ws:
+                if msg.type == aiohttp.WSMsgType.TEXT:
+                    data = msg.json()
                     
-                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                        break
+                    if data.get("type") == "alarm":
+                        alarm = data.get("data", {})
+                        alarm_id = alarm.get("id")
                         
+                        if alarm_id and alarm_id in notified_ids:
+                            continue
+                        
+                        alarm_data = {
+                            "keyword": alarm.get("keyword"),
+                            "unit": alarm.get("unit"),
+                            "vehicles": alarm.get("vehicles"),
+                            "timestamp": alarm.get("timestamp"),
+                        }
+                        
+                        # Fire event
+                        hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
+                        _LOGGER.info(f"WebSocket alarm event fired: {alarm.get('keyword')}")
+                        
+                        # Handle notifications
+                        if entry_id in hass.data.get(DOMAIN, {}):
+                            coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
+                            await coordinator._handle_alarm_notifications(alarm_data, alarm_id)
+                            await coordinator.async_request_refresh()
+                        
+                        if alarm_id:
+                            notified_ids.add(alarm_id)
+                            if len(notified_ids) > 100:
+                                notified_ids = set(list(notified_ids)[-50:])
+                    
+                    elif data.get("type") == "ping":
+                        await ws.send_str("pong")
+                
+                elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                    break
+                    
+        except asyncio.TimeoutError:
+            _LOGGER.warning(f"WebSocket connection timeout. Reconnecting in 30s...")
+        except aiohttp.ClientError as err:
+            _LOGGER.warning(f"WebSocket connection error: {err}. Reconnecting in 30s...")
         except Exception as err:
             _LOGGER.warning(f"WebSocket error: {err}. Reconnecting in 30s...")
         
@@ -424,14 +445,19 @@ async def async_register_card(hass: HomeAssistant):
             from homeassistant.components.lovelace.resources import ResourceStorageCollection
             
             # Wait a bit for lovelace to fully initialize
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
             
             if LOVELACE_DOMAIN not in hass.data:
                 _LOGGER.warning(f"Lovelace not available. Please add resource manually: {CARD_URL_PATH}")
                 return
             
             lovelace_data = hass.data[LOVELACE_DOMAIN]
-            resources = lovelace_data.get("resources")
+            
+            # Use the new attribute-based access (HA 2024.1+)
+            resources = getattr(lovelace_data, 'resources', None)
+            if resources is None:
+                # Fallback to dict access for older versions
+                resources = lovelace_data.get("resources") if isinstance(lovelace_data, dict) else None
             
             if not resources or not isinstance(resources, ResourceStorageCollection):
                 _LOGGER.info(f"Lovelace resources not available. Add manually: {CARD_URL_PATH}")
