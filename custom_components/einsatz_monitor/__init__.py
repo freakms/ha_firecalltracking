@@ -224,21 +224,24 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
             )
             _LOGGER.info(f"Alexa notification sent to {alexa_entity}")
             
-            # Stop Alexa after message
+            # Stop Alexa after message - mehrfach versuchen
             word_count = len(message.split())
-            wait_time = max(3, word_count * 0.75 + 2)
+            wait_time = max(5, word_count * 0.75 + 3)
             
             async def stop_alexa():
                 await asyncio.sleep(wait_time)
-                try:
-                    await self.hass.services.async_call(
-                        "media_player",
-                        "media_stop",
-                        {"entity_id": alexa_entity},
-                        blocking=False,
-                    )
-                except Exception:
-                    pass
+                for attempt in range(3):
+                    try:
+                        await self.hass.services.async_call(
+                            "media_player",
+                            "media_stop",
+                            {"entity_id": alexa_entity},
+                            blocking=False,
+                        )
+                        _LOGGER.debug(f"Alexa stop attempt {attempt+1}")
+                    except Exception:
+                        pass
+                    await asyncio.sleep(2)
             
             self.hass.async_create_task(stop_alexa())
             
@@ -373,20 +376,37 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
                             "timestamp": alarm.get("timestamp"),
                         }
                         
-                        # Fire event
-                        hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
-                        _LOGGER.info(f"WebSocket alarm event fired: {alarm.get('keyword')}")
-                        
-                        # Handle notifications
+                        # Notification über Coordinator abwickeln
+                        # Der Coordinator trägt die alarm_id in _notified_alarm_ids ein
+                        # damit der Polling-Loop denselben Alarm NICHT nochmal feuert
                         if entry_id in hass.data.get(DOMAIN, {}):
                             coordinator = hass.data[DOMAIN][entry_id]["coordinator"]
+                            
+                            if alarm_id and alarm_id in coordinator._notified_alarm_ids:
+                                _LOGGER.debug(f"WebSocket: Alarm {alarm_id} bereits verarbeitet, übersprungen")
+                                continue
+                            
+                            # Alarm-ID sofort in BEIDEN Sets eintragen
+                            if alarm_id:
+                                notified_ids.add(alarm_id)
+                                coordinator._notified_alarm_ids.add(alarm_id)
+                                if len(coordinator._notified_alarm_ids) > 100:
+                                    coordinator._notified_alarm_ids = set(list(coordinator._notified_alarm_ids)[-50:])
+                                if len(notified_ids) > 100:
+                                    notified_ids = set(list(notified_ids)[-50:])
+                            
+                            # Event feuern und Alexa benachrichtigen
+                            hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
+                            _LOGGER.info(f"WebSocket alarm event fired: {alarm.get('keyword')}")
                             await coordinator._handle_alarm_notifications(alarm_data, alarm_id)
                             await coordinator.async_request_refresh()
-                        
-                        if alarm_id:
-                            notified_ids.add(alarm_id)
-                            if len(notified_ids) > 100:
-                                notified_ids = set(list(notified_ids)[-50:])
+                        else:
+                            # Kein Coordinator verfügbar, direkt feuern
+                            if alarm_id and alarm_id not in notified_ids:
+                                hass.bus.async_fire(EVENT_NEW_ALARM, alarm_data)
+                                _LOGGER.info(f"WebSocket alarm event fired (no coordinator): {alarm.get('keyword')}")
+                                if alarm_id:
+                                    notified_ids.add(alarm_id)
                     
                     elif data.get("type") == "ping":
                         await ws.send_str("pong")
@@ -399,16 +419,23 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
             _LOGGER.warning(f"WebSocket connection timeout ({retry_count}/{max_retries}). Retrying in 60s...")
         except aiohttp.ClientResponseError as err:
             if err.status == 404:
-                _LOGGER.error(f"WebSocket endpoint not found (404). WebSocket disabled. URL: {ws_url}")
-                _LOGGER.info("The backend server may not support WebSocket. Polling will still work.")
+                _LOGGER.warning(
+                    f"WebSocket endpoint nicht erreichbar (404) – vermutlich fehlt die "
+                    f"WebSocket-Konfiguration im Nginx Proxy Manager. "
+                    f"Polling läuft weiter (alle {60}s). URL: {ws_url}"
+                )
+                _LOGGER.warning(
+                    "Fix: Im Nginx Proxy Manager beim Proxy Host unter 'Advanced' eintragen: "
+                    "proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; "
+                    "proxy_set_header Connection 'upgrade'; proxy_read_timeout 86400s;"
+                )
                 return  # Stop trying - endpoint doesn't exist
             retry_count += 1
             _LOGGER.warning(f"WebSocket HTTP error {err.status} ({retry_count}/{max_retries}). Retrying in 60s...")
         except aiohttp.ClientError as err:
             retry_count += 1
             if "404" in str(err):
-                _LOGGER.error(f"WebSocket endpoint not found (404). WebSocket disabled.")
-                _LOGGER.info("The backend server may not support WebSocket. Polling will still work.")
+                _LOGGER.warning(f"WebSocket endpoint nicht erreichbar (404). Polling läuft weiter.")
                 return  # Stop trying
             _LOGGER.warning(f"WebSocket connection error ({retry_count}/{max_retries}): {err}. Retrying in 60s...")
         except Exception as err:
@@ -416,8 +443,7 @@ async def start_websocket(hass: HomeAssistant, entry: ConfigEntry, url: str, tok
             _LOGGER.warning(f"WebSocket error ({retry_count}/{max_retries}): {err}. Retrying in 60s...")
         
         if retry_count >= max_retries:
-            _LOGGER.error(f"WebSocket failed after {max_retries} attempts. Disabling WebSocket.")
-            _LOGGER.info("Polling mode will continue to work for alarm updates.")
+            _LOGGER.warning(f"WebSocket nach {max_retries} Versuchen deaktiviert. Polling läuft weiter.")
             return
         
         await asyncio.sleep(60)  # Wait 60 seconds between retries
