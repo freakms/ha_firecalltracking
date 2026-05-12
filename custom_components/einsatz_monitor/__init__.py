@@ -454,6 +454,7 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                     try:
                         for entity_id, prev in frozen_states.items():
                             if prev["state"] == "on":
+                                # Originalfarbe/-helligkeit zurücksetzen
                                 restore_data = {"entity_id": entity_id}
                                 if "brightness" in prev["attributes"]:
                                     restore_data["brightness"] = prev["attributes"]["brightness"]
@@ -461,10 +462,34 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                                     restore_data["rgb_color"] = prev["attributes"]["rgb_color"]
                                 elif "color_temp" in prev["attributes"]:
                                     restore_data["color_temp"] = prev["attributes"]["color_temp"]
+                                elif "xy_color" in prev["attributes"]:
+                                    restore_data["xy_color"] = prev["attributes"]["xy_color"]
                                 await self.hass.services.async_call(
-                                    "light", "turn_on", restore_data, blocking=False
+                                    "light", "turn_on", restore_data, blocking=True
+                                )
+                                await asyncio.sleep(0.5)
+                                await self.hass.services.async_call(
+                                    "light", "turn_off",
+                                    {"entity_id": entity_id}, blocking=False
                                 )
                             else:
+                                # War aus: erst auf Originalfarbe setzen (damit HA
+                                # den richtigen Zustand merkt), dann ausschalten
+                                restore_data = {"entity_id": entity_id}
+                                if "brightness" in prev["attributes"]:
+                                    restore_data["brightness"] = prev["attributes"]["brightness"]
+                                if "rgb_color" in prev["attributes"]:
+                                    restore_data["rgb_color"] = prev["attributes"]["rgb_color"]
+                                elif "color_temp" in prev["attributes"]:
+                                    restore_data["color_temp"] = prev["attributes"]["color_temp"]
+                                elif "xy_color" in prev["attributes"]:
+                                    restore_data["xy_color"] = prev["attributes"]["xy_color"]
+                                # Kurz einschalten mit richtiger Farbe damit HA
+                                # den Zustand korrekt speichert
+                                await self.hass.services.async_call(
+                                    "light", "turn_on", restore_data, blocking=True
+                                )
+                                await asyncio.sleep(0.5)
                                 await self.hass.services.async_call(
                                     "light", "turn_off",
                                     {"entity_id": entity_id}, blocking=False
