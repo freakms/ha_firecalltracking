@@ -474,7 +474,7 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                                 "turn_on",
                                 {
                                     "entity_id": entity_id,
-                                    "kelvin": 2700,
+                                    "color_temp_kelvin": 2700,
                                     "brightness": 200,
                                     "transition": 1,
                                 },
