@@ -189,12 +189,18 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         speaker_entity = options.get(CONF_SPEAKER_ENTITY, options.get("alexa_entity", ""))
 
         if enable_speaker and speaker_entity:
-            await self._send_speaker_notification(alarm_data, options)
+            try:
+                await self._send_speaker_notification(alarm_data, options)
+            except Exception as e:
+                _LOGGER.error(f"Speaker-Notification fehlgeschlagen: {e} — Integration läuft weiter.")
 
         # Licht-Alarm
         light_entities = options.get(CONF_LIGHT_ENTITIES, [])
         if options.get(CONF_ENABLE_LIGHT) and light_entities:
-            await self._activate_light_alert(alarm_data, options)
+            try:
+                await self._activate_light_alert(alarm_data, options)
+            except Exception as e:
+                _LOGGER.error(f"Licht-Alarm fehlgeschlagen: {e} — Integration läuft weiter.")
 
     async def _send_speaker_notification(self, alarm_data: dict, options: dict):
         """
@@ -230,6 +236,14 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         try:
             if speaker_type == SPEAKER_TYPE_ALEXA:
                 # Alexa Media Player (HACS: alexa_media_player)
+                # Prüfen ob der Service verfügbar ist
+                if not self.hass.services.has_service("notify", "alexa_media"):
+                    _LOGGER.error(
+                        "Alexa-Sprachausgabe: Service notify.alexa_media nicht gefunden. "
+                        "Bitte die HACS-Integration 'alexa_media_player' installieren und "
+                        "einrichten: https://github.com/alandtse/alexa_media_player"
+                    )
+                    return
                 await self.hass.services.async_call(
                     "notify",
                     "alexa_media",
@@ -303,7 +317,11 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
             self.hass.async_create_task(stop_speaker())
 
         except Exception as e:
-            _LOGGER.error(f"Fehler bei Speaker-Benachrichtigung ({speaker_type}): {e}")
+            _LOGGER.error(
+                f"Fehler bei Speaker-Benachrichtigung ({speaker_type}): {e} — "
+                f"Sprachausgabe wird übersprungen, Integration läuft weiter."
+            )
+            # Exception NICHT weiterwerfen — Coordinator darf nicht crashen
 
     async def _activate_light_alert(self, alarm_data: dict, options: dict):
         """Activate light alert — speichert vorherigen Zustand und stellt ihn danach wieder her."""
