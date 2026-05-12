@@ -101,6 +101,17 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
+    # Laufende Licht-Tasks abbrechen damit kein veralteter Zustand wiederhergestellt wird
+    if entry.entry_id in hass.data.get(DOMAIN, {}):
+        coordinator = hass.data[DOMAIN][entry.entry_id].get("coordinator")
+        if coordinator:
+            for task in coordinator._active_light_tasks:
+                if not task.done():
+                    task.cancel()
+                    _LOGGER.debug("Licht-Restore-Task abgebrochen (Entry wird neu geladen)")
+            coordinator._active_light_tasks = []
+            coordinator._light_previous_states = {}
+
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
@@ -132,6 +143,8 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         self.token = token
         self.last_alarm_id = None
         self._notified_alarm_ids = set()
+        self._active_light_tasks: list = []
+        self._light_previous_states: dict = {}
 
     async def _async_update_data(self):
         """Fetch data from API."""
@@ -360,15 +373,17 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
 
         duration = options.get(CONF_LIGHT_DURATION, DEFAULT_LIGHT_DURATION)
 
-        # Vorherige Zustände speichern
-        previous_states = {}
-        for entity_id in light_entities:
-            state = self.hass.states.get(entity_id)
-            if state:
-                previous_states[entity_id] = {
-                    "state": state.state,
-                    "attributes": dict(state.attributes),
-                }
+        # Vorherige Zustände speichern (nur wenn kein Alarm aktiv)
+        # Bei aktivem Alarm den gespeicherten Zustand NICHT überschreiben
+        if not self._light_previous_states:
+            for entity_id in light_entities:
+                state = self.hass.states.get(entity_id)
+                if state:
+                    self._light_previous_states[entity_id] = {
+                        "state": state.state,
+                        "attributes": dict(state.attributes),
+                    }
+        previous_states = self._light_previous_states
 
         try:
             await self.hass.services.async_call(
@@ -408,7 +423,10 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                     except Exception as e:
                         _LOGGER.error(f"Fehler beim Wiederherstellen der Lichter: {e}")
 
-                self.hass.async_create_task(restore_lights())
+                task = self.hass.async_create_task(restore_lights())
+                self._active_light_tasks.append(task)
+                # Abgeschlossene Tasks aus Liste entfernen
+                self._active_light_tasks = [t for t in self._active_light_tasks if not t.done()]
 
         except Exception as e:
             _LOGGER.error(f"Fehler beim Licht-Alarm: {e}")
