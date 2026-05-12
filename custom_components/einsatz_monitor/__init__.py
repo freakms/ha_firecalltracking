@@ -145,6 +145,7 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         self._notified_alarm_ids = set()
         self._active_light_tasks: list = []
         self._light_previous_states: dict = {}
+        self._startup_complete = False
 
     async def _async_update_data(self):
         """Fetch data from API."""
@@ -161,9 +162,22 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                     latest = alarms[0]
                     alarm_id = latest.get("id")
 
-                    # Nur feuern wenn diese ID noch nicht verarbeitet wurde
-                    # (WebSocket könnte sie schon eingetragen haben)
-                    if alarm_id and alarm_id not in self._notified_alarm_ids:
+                    # Beim ersten Aufruf nach dem Start (startup_complete=False):
+                    # Alle vorhandenen Alarm-IDs als "bereits bekannt" markieren
+                    # damit kein Testalarm ausgelöst wird
+                    if not self._startup_complete:
+                        for alarm in alarms:
+                            aid = alarm.get("id")
+                            if aid:
+                                self._notified_alarm_ids.add(aid)
+                        self._startup_complete = True
+                        _LOGGER.debug(
+                            f"Startup: {len(self._notified_alarm_ids)} bekannte Alarm-IDs "
+                            f"geladen, keine Notifications beim Start."
+                        )
+                    elif alarm_id and alarm_id not in self._notified_alarm_ids:
+                        # Nur feuern wenn diese ID noch nicht verarbeitet wurde
+                        # (WebSocket könnte sie schon eingetragen haben)
                         self.last_alarm_id = alarm_id
                         self._notified_alarm_ids.add(alarm_id)
 
@@ -182,6 +196,11 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
 
                         if len(self._notified_alarm_ids) > 100:
                             self._notified_alarm_ids = set(list(self._notified_alarm_ids)[-50:])
+
+                else:
+                    # Keine Alarme vorhanden — Startup trotzdem abschließen
+                    if not self._startup_complete:
+                        self._startup_complete = True
 
                 return {
                     "alarms": alarms,
