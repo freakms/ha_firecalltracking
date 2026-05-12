@@ -266,10 +266,29 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                         _LOGGER.debug(f"Alexa Service gefunden: notify.{alexa_service}")
 
                 if not alexa_service:
+                    # Möglicherweise noch nicht geladen (Race Condition beim HA-Start)
+                    # Bis zu 3x mit 10s Abstand warten und erneut suchen
+                    for wait_attempt in range(3):
+                        await asyncio.sleep(10)
+                        all_notify = self.hass.services.async_services().get("notify", {})
+                        alexa_services = [s for s in all_notify if s.startswith("alexa")]
+                        if alexa_services:
+                            alexa_service = alexa_services[0]
+                            _LOGGER.info(
+                                f"Alexa Service nach {(wait_attempt+1)*10}s gefunden: "
+                                f"notify.{alexa_service}"
+                            )
+                            break
+                        _LOGGER.debug(
+                            f"Warte auf Alexa Service... Versuch {wait_attempt+1}/3. "
+                            f"Verfügbare notify-Services: {list(all_notify.keys())}"
+                        )
+
+                if not alexa_service:
                     _LOGGER.error(
                         "Alexa-Sprachausgabe: Kein Alexa notify-Service gefunden. "
-                        "Bitte die HACS-Integration 'alexa_media_player' installieren und "
-                        "einrichten: https://github.com/alandtse/alexa_media_player. "
+                        "Bitte sicherstellen dass 'alexa_media_player' (HACS) installiert "
+                        "und mit Amazon-Account verknüpft ist. "
                         "Verfügbare notify-Services: "
                         + str(list(self.hass.services.async_services().get("notify", {}).keys()))
                     )
