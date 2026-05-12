@@ -146,6 +146,7 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         self._active_light_tasks: list = []
         self._light_previous_states: dict = {}
         self._startup_complete = False
+        self._cached_alexa_service: str | None = None
 
     async def _async_update_data(self):
         """Fetch data from API."""
@@ -271,37 +272,43 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                 # Service-Name dynamisch ermitteln:
                 # Neuere alexa_media_player Versionen nutzen notify.alexa_media,
                 # ältere oder gerätespezifische nutzen notify.alexa_media_{gerätename}
+                # Cache nutzen wenn vorhanden und Service noch existiert
                 alexa_service = None
-
-                if self.hass.services.has_service("notify", "alexa_media"):
-                    alexa_service = "alexa_media"
+                if self._cached_alexa_service and self.hass.services.has_service(
+                    "notify", self._cached_alexa_service
+                ):
+                    alexa_service = self._cached_alexa_service
                 else:
-                    # Alle notify-Services durchsuchen die mit alexa beginnen
-                    all_notify = self.hass.services.async_services().get("notify", {})
-                    alexa_services = [s for s in all_notify if s.startswith("alexa")]
-                    if alexa_services:
-                        # Ersten verfügbaren nehmen
-                        alexa_service = alexa_services[0]
-                        _LOGGER.debug(f"Alexa Service gefunden: notify.{alexa_service}")
-
-                if not alexa_service:
-                    # Möglicherweise noch nicht geladen (Race Condition beim HA-Start)
-                    # Bis zu 3x mit 10s Abstand warten und erneut suchen
-                    for wait_attempt in range(3):
-                        await asyncio.sleep(10)
+                    if self.hass.services.has_service("notify", "alexa_media"):
+                        alexa_service = "alexa_media"
+                    else:
+                        # Alle notify-Services durchsuchen die mit alexa beginnen
                         all_notify = self.hass.services.async_services().get("notify", {})
                         alexa_services = [s for s in all_notify if s.startswith("alexa")]
                         if alexa_services:
                             alexa_service = alexa_services[0]
-                            _LOGGER.info(
-                                f"Alexa Service nach {(wait_attempt+1)*10}s gefunden: "
-                                f"notify.{alexa_service}"
+                            _LOGGER.debug(f"Alexa Service gefunden: notify.{alexa_service}")
+                    if alexa_service:
+                        self._cached_alexa_service = alexa_service
+
+                if not alexa_service:
+                    # Möglicherweise noch nicht geladen (Race Condition beim HA-Start)
+                    # Nur beim ersten Alarm nach dem Start kurz warten, danach direkt abbrechen
+                    if not self._startup_complete:
+                        for wait_attempt in range(3):
+                            await asyncio.sleep(5)
+                            all_notify = self.hass.services.async_services().get("notify", {})
+                            alexa_services = [s for s in all_notify if s.startswith("alexa")]
+                            if alexa_services:
+                                alexa_service = alexa_services[0]
+                                _LOGGER.info(
+                                    f"Alexa Service nach {(wait_attempt+1)*5}s gefunden: "
+                                    f"notify.{alexa_service}"
+                                )
+                                break
+                            _LOGGER.debug(
+                                f"Warte auf Alexa Service... Versuch {wait_attempt+1}/3"
                             )
-                            break
-                        _LOGGER.debug(
-                            f"Warte auf Alexa Service... Versuch {wait_attempt+1}/3. "
-                            f"Verfügbare notify-Services: {list(all_notify.keys())}"
-                        )
 
                 if not alexa_service:
                     _LOGGER.error(
