@@ -236,17 +236,35 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
         try:
             if speaker_type == SPEAKER_TYPE_ALEXA:
                 # Alexa Media Player (HACS: alexa_media_player)
-                # Prüfen ob der Service verfügbar ist
-                if not self.hass.services.has_service("notify", "alexa_media"):
+                # Service-Name dynamisch ermitteln:
+                # Neuere alexa_media_player Versionen nutzen notify.alexa_media,
+                # ältere oder gerätespezifische nutzen notify.alexa_media_{gerätename}
+                alexa_service = None
+
+                if self.hass.services.has_service("notify", "alexa_media"):
+                    alexa_service = "alexa_media"
+                else:
+                    # Alle notify-Services durchsuchen die mit alexa beginnen
+                    all_notify = self.hass.services.async_services().get("notify", {})
+                    alexa_services = [s for s in all_notify if s.startswith("alexa")]
+                    if alexa_services:
+                        # Ersten verfügbaren nehmen
+                        alexa_service = alexa_services[0]
+                        _LOGGER.debug(f"Alexa Service gefunden: notify.{alexa_service}")
+
+                if not alexa_service:
                     _LOGGER.error(
-                        "Alexa-Sprachausgabe: Service notify.alexa_media nicht gefunden. "
+                        "Alexa-Sprachausgabe: Kein Alexa notify-Service gefunden. "
                         "Bitte die HACS-Integration 'alexa_media_player' installieren und "
-                        "einrichten: https://github.com/alandtse/alexa_media_player"
+                        "einrichten: https://github.com/alandtse/alexa_media_player. "
+                        "Verfügbare notify-Services: "
+                        + str(list(self.hass.services.async_services().get("notify", {}).keys()))
                     )
                     return
+
                 await self.hass.services.async_call(
                     "notify",
-                    "alexa_media",
+                    alexa_service,
                     {
                         "message": message,
                         "target": speaker_entity,
@@ -254,7 +272,7 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                     },
                     blocking=False,
                 )
-                _LOGGER.info(f"Alexa TTS gesendet an {speaker_entity}")
+                _LOGGER.info(f"Alexa TTS gesendet via notify.{alexa_service} an {speaker_entity}")
 
             elif speaker_type == SPEAKER_TYPE_SONOS:
                 # Sonos über media_player.play_media
