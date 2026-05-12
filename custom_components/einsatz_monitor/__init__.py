@@ -444,10 +444,15 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
             _LOGGER.info(f"Licht-Alarm aktiviert für {len(light_entities)} Lampen")
 
             if duration > 0:
+                # Snapshot jetzt einfrieren — spätere Änderungen am Licht
+                # (Bewegungsmelder, manuell) sollen NICHT überschrieben werden
+                frozen_states = dict(previous_states)
+                self._light_previous_states = {}  # Sofort leeren nach Snapshot
+
                 async def restore_lights():
                     await asyncio.sleep(duration)
                     try:
-                        for entity_id, prev in previous_states.items():
+                        for entity_id, prev in frozen_states.items():
                             if prev["state"] == "on":
                                 restore_data = {"entity_id": entity_id}
                                 if "brightness" in prev["attributes"]:
@@ -470,8 +475,10 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
 
                 task = self.hass.async_create_task(restore_lights())
                 self._active_light_tasks.append(task)
-                # Abgeschlossene Tasks aus Liste entfernen
                 self._active_light_tasks = [t for t in self._active_light_tasks if not t.done()]
+            else:
+                # Kein Restore — previous_states direkt leeren
+                self._light_previous_states = {}
 
         except Exception as e:
             _LOGGER.error(f"Fehler beim Licht-Alarm: {e}")
