@@ -424,10 +424,23 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
             for entity_id in light_entities:
                 state = self.hass.states.get(entity_id)
                 if state:
-                    self._light_previous_states[entity_id] = {
+                    attrs = dict(state.attributes)
+                    # Wenn Licht aus ist: letzte bekannte Farbe aus
+                    # 'last_color_mode' / 'hs_color' / 'color_temp' holen
+                    # damit HA nach dem Restore die richtige Farbe kennt
+                    snapshot = {
                         "state": state.state,
-                        "attributes": dict(state.attributes),
+                        "attributes": attrs,
+                        # Farb-Fallback: color_mode merken
+                        "color_mode": attrs.get("color_mode"),
                     }
+                    self._light_previous_states[entity_id] = snapshot
+                    _LOGGER.debug(
+                        f"Licht-Snapshot {entity_id}: state={state.state}, "
+                        f"rgb={attrs.get('rgb_color')}, "
+                        f"color_temp={attrs.get('color_temp')}, "
+                        f"brightness={attrs.get('brightness')}"
+                    )
         previous_states = self._light_previous_states
 
         try:
@@ -452,37 +465,32 @@ class EinsatzMonitorCoordinator(DataUpdateCoordinator):
                 async def restore_lights():
                     await asyncio.sleep(duration)
                     try:
-                        for entity_id, prev in frozen_states.items():
-                            attrs = prev.get("attributes", {})
-
-                            # Restore-Daten aufbereiten — Typen korrekt casten
-                            restore_data = {"entity_id": entity_id}
-                            if "brightness" in attrs:
-                                restore_data["brightness"] = int(attrs["brightness"])
-                            if "rgb_color" in attrs:
-                                restore_data["rgb_color"] = [int(c) for c in attrs["rgb_color"]]
-                            elif "color_temp" in attrs:
-                                restore_data["color_temp"] = int(attrs["color_temp"])
-                            elif "xy_color" in attrs:
-                                restore_data["xy_color"] = [float(c) for c in attrs["xy_color"]]
-
-                            # Erst auf Originalzustand setzen damit HA ihn speichert
-                            # (verhindert dass HA beim nächsten turn_on die Alarmfarbe nutzt)
+                        for entity_id in frozen_states:
+                            # Erst auf Warmweiß setzen damit HA diesen Zustand
+                            # als letzten kennt — Tageszeit-Automation übernimmt
+                            # beim nächsten Bewegungsmelder-Trigger den Rest
                             await self.hass.services.async_call(
-                                "light", "turn_on", restore_data, blocking=True
+                                "light",
+                                "turn_on",
+                                {
+                                    "entity_id": entity_id,
+                                    "kelvin": 2700,
+                                    "brightness": 200,
+                                    "transition": 1,
+                                },
+                                blocking=True,
                             )
-                            await asyncio.sleep(0.5)
+                            await asyncio.sleep(1.2)
+                            await self.hass.services.async_call(
+                                "light",
+                                "turn_off",
+                                {"entity_id": entity_id},
+                                blocking=False,
+                            )
 
-                            # Dann ausschalten wenn Licht vorher aus war
-                            if prev["state"] != "on":
-                                await self.hass.services.async_call(
-                                    "light", "turn_off",
-                                    {"entity_id": entity_id}, blocking=False
-                                )
-
-                        _LOGGER.info(f"Lichtzustand wiederhergestellt nach {duration}s")
+                        _LOGGER.info(f"Licht-Alarm beendet nach {duration}s — auf Warmweiß zurückgesetzt")
                     except Exception as e:
-                        _LOGGER.error(f"Fehler beim Wiederherstellen der Lichter: {e}")
+                        _LOGGER.error(f"Fehler beim Beenden des Licht-Alarms: {e}")
 
                 task = self.hass.async_create_task(restore_lights())
                 self._active_light_tasks.append(task)
