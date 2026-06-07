@@ -1,7 +1,7 @@
 /**
  * Einsatz-Monitor Card for Home Assistant
  * Displays the last 4 incidents as a 2x2 grid with color-coded cards
- * Version: 1.4.19
+ * Version: 1.4.20
  */
 
 class EinsatzMonitorCard extends HTMLElement {
@@ -138,24 +138,53 @@ class EinsatzMonitorCard extends HTMLElement {
     `;
   }
 
+  _findEntity() {
+    const configured = this.config.entity;
+    if (configured) return this._hass.states[configured] ? configured : null;
+
+    // try common slugs
+    const candidates = [
+      'sensor.letzte_einsatze',
+      'sensor.einsatz_monitor_letzte_einsatze',
+      'sensor.einsatz_liste',
+      'sensor.einsatz_monitor_einsatz_liste',
+    ];
+    for (const id of candidates) {
+      if (this._hass.states[id]) return id;
+    }
+    // fallback: search all sensors for einsaetze attribute
+    for (const [id, state] of Object.entries(this._hass.states)) {
+      if (id.startsWith('sensor.') && state.attributes && state.attributes.einsaetze) {
+        return id;
+      }
+    }
+    return null;
+  }
+
   _render() {
     if (!this._hass) return;
 
-    const entityId = this.config.entity || 'sensor.letzte_einsatze';
     const title = this.config.title || 'Letzte Einsätze';
-    const stateObj = this._hass.states[entityId];
+    const entityId = this._findEntity();
 
-    if (!stateObj) {
+    if (!entityId) {
+      // show all sensor entity IDs with einsatz in name to help diagnose
+      const hints = Object.keys(this._hass.states)
+        .filter(id => id.startsWith('sensor.') && id.includes('einsatz'))
+        .join(', ') || 'keine sensor.einsatz* Entities gefunden';
       this.innerHTML = `
         <ha-card header="${title}">
-          <div style="padding: 16px; color: #ef4444;">
+          <div style="padding: 16px; color: #ef4444; font-size: 0.85em;">
             <ha-icon icon="mdi:alert" style="margin-right: 8px;"></ha-icon>
-            Entity nicht gefunden: ${entityId}
+            Sensor nicht gefunden. Vorhandene Einsatz-Entities:<br>
+            <code style="font-size:0.9em;">${hints}</code>
           </div>
         </ha-card>
       `;
       return;
     }
+
+    const stateObj = this._hass.states[entityId];
 
     const allEinsaetze = stateObj.attributes.einsaetze || [];
     const einsaetze = allEinsaetze.slice(0, 4);
@@ -201,7 +230,7 @@ window.customCards.push({
   description: 'Zeigt die letzten 4 Einsätze im Grid-Design mit farblicher Kennzeichnung'
 });
 
-console.info('%c EINSATZ-MONITOR-CARD %c v1.4.19 ',
+console.info('%c EINSATZ-MONITOR-CARD %c v1.4.20 ',
   'background: #ef4444; color: white; font-weight: bold;',
   'background: #333; color: white;'
 );
