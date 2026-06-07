@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from homeassistant.components.sensor import (
     SensorEntity,
@@ -204,41 +204,52 @@ class EinsatzTimestampSensor(EinsatzBaseSensor):
 
 
 class EinsatzListSensor(EinsatzBaseSensor):
-    """Sensor showing the last 5 incidents with full details."""
-    
+    """Sensor showing incidents from the last 7 days (max 4) with full details."""
+
     def __init__(self, coordinator, entry: ConfigEntry) -> None:
-        """Initialize the sensor."""
         super().__init__(coordinator, entry, "einsatz_liste")
         self._attr_name = "Letzte Einsätze"
         self._attr_icon = "mdi:format-list-bulleted"
-    
+
+    def _within_7_days(self, timestamp_str) -> bool:
+        if not timestamp_str:
+            return False
+        try:
+            ts = datetime.fromisoformat(str(timestamp_str))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            return ts >= cutoff
+        except Exception:
+            return False
+
     @property
     def native_value(self):
-        """Return the number of recent incidents."""
         if self.coordinator.data and self.coordinator.data.get("alarms"):
-            return min(len(self.coordinator.data["alarms"]), 5)
+            recent = [a for a in self.coordinator.data["alarms"] if self._within_7_days(a.get("timestamp"))]
+            return min(len(recent), 4)
         return 0
-    
+
     @property
     def extra_state_attributes(self):
-        """Return the last 5 incidents as attributes."""
         if self.coordinator.data and self.coordinator.data.get("alarms"):
-            alarms = self.coordinator.data["alarms"][:5]  # Last 5
-            
+            cutoff_alarms = [
+                a for a in self.coordinator.data["alarms"]
+                if self._within_7_days(a.get("timestamp"))
+            ][:4]
+
             einsatz_list = []
-            for alarm in alarms:
+            for alarm in cutoff_alarms:
                 keyword = alarm.get("keyword", "")
-                einsatz_type = get_einsatz_type(keyword)
-                
                 einsatz_list.append({
                     "id": alarm.get("id"),
                     "keyword": keyword,
                     "unit": alarm.get("unit"),
                     "vehicles": alarm.get("vehicles"),
                     "timestamp": alarm.get("timestamp"),
-                    "type": einsatz_type,
+                    "type": get_einsatz_type(keyword),
                 })
-            
+
             return {
                 "einsaetze": einsatz_list,
                 "einsaetze_json": json.dumps(einsatz_list, ensure_ascii=False),
