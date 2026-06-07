@@ -47,7 +47,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CARD_DIR = Path(__file__).parent / "www"
 CARD_FILENAME = "einsatz-monitor-card.js"
-CARD_VERSION = "1.4.21"
+CARD_VERSION = "1.4.22"
 CARD_URL_PATH = f"/einsatz_monitor/{CARD_FILENAME}"
 CARD_URL_VERSIONED = f"{CARD_URL_PATH}?v={CARD_VERSION}"
 

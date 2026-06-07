@@ -1,7 +1,7 @@
 /**
  * Einsatz-Monitor Card for Home Assistant
  * Displays the last 4 incidents as a 2x2 grid with color-coded cards
- * Version: 1.4.21
+ * Version: 1.4.22
  */
 
 class EinsatzMonitorCard extends HTMLElement {
@@ -144,17 +144,18 @@ class EinsatzMonitorCard extends HTMLElement {
 
     // try common slugs
     const candidates = [
-      'sensor.letzte_einsatze',
       'sensor.einsatz_monitor_letzte_einsatze',
-      'sensor.einsatz_liste',
+      'sensor.letzte_einsatze',
       'sensor.einsatz_monitor_einsatz_liste',
+      'sensor.einsatz_liste',
     ];
     for (const id of candidates) {
       if (this._hass.states[id]) return id;
     }
     // fallback: search all sensors for einsaetze attribute
     for (const [id, state] of Object.entries(this._hass.states)) {
-      if (id.startsWith('sensor.') && state.attributes && state.attributes.einsaetze) {
+      if (id.startsWith('sensor.') && state.attributes &&
+          (state.attributes.einsaetze !== undefined || state.attributes.einsaetze_json !== undefined)) {
         return id;
       }
     }
@@ -230,7 +231,7 @@ window.customCards.push({
   description: 'Zeigt die letzten 4 Einsätze im Grid-Design mit farblicher Kennzeichnung'
 });
 
-console.info('%c EINSATZ-MONITOR-CARD %c v1.4.21 ',
+console.info('%c EINSATZ-MONITOR-CARD %c v1.4.22 ',
   'background: #ef4444; color: white; font-weight: bold;',
   'background: #333; color: white;'
 );
