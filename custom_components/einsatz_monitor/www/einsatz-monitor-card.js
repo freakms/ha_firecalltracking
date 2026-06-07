@@ -1,7 +1,7 @@
 /**
  * Einsatz-Monitor Card for Home Assistant
  * Displays the last 4 incidents as a 2x2 grid with color-coded cards
- * Version: 1.4.20
+ * Version: 1.4.21
  */
 
 class EinsatzMonitorCard extends HTMLElement {
@@ -230,7 +230,7 @@ window.customCards.push({
   description: 'Zeigt die letzten 4 Einsätze im Grid-Design mit farblicher Kennzeichnung'
 });
 
-console.info('%c EINSATZ-MONITOR-CARD %c v1.4.20 ',
+console.info('%c EINSATZ-MONITOR-CARD %c v1.4.21 ',
   'background: #ef4444; color: white; font-weight: bold;',
   'background: #333; color: white;'
 );

@@ -47,7 +47,9 @@ _LOGGER = logging.getLogger(__name__)
 
 CARD_DIR = Path(__file__).parent / "www"
 CARD_FILENAME = "einsatz-monitor-card.js"
+CARD_VERSION = "1.4.21"
 CARD_URL_PATH = f"/einsatz_monitor/{CARD_FILENAME}"
+CARD_URL_VERSIONED = f"{CARD_URL_PATH}?v={CARD_VERSION}"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -704,20 +706,25 @@ async def async_register_card(hass: HomeAssistant):
             ]
 
             if existing:
-                correct = [r for r in existing if r.get("url", "").startswith("/einsatz_monitor/")]
-                if correct:
-                    _LOGGER.debug("Card-Ressource bereits korrekt registriert")
-                    return
-                else:
-                    _LOGGER.warning(f"Card-Ressource hat falsche URL. "
-                                    f"Bitte auf {CARD_URL_PATH} aktualisieren.")
-                    return
+                for r in existing:
+                    if r.get("url") != CARD_URL_VERSIONED:
+                        try:
+                            await resources.async_update_item(r["id"], {
+                                "url": CARD_URL_VERSIONED,
+                                "res_type": "module"
+                            })
+                            _LOGGER.info(f"Card-Ressource auf {CARD_URL_VERSIONED} aktualisiert")
+                        except Exception as upd_err:
+                            _LOGGER.warning(f"Card-URL-Update fehlgeschlagen: {upd_err}")
+                    else:
+                        _LOGGER.debug("Card-Ressource bereits aktuell")
+                return
 
             await resources.async_create_item({
-                "url": CARD_URL_PATH,
+                "url": CARD_URL_VERSIONED,
                 "res_type": "module"
             })
-            _LOGGER.info(f"Lovelace-Ressource hinzugefügt: {CARD_URL_PATH}")
+            _LOGGER.info(f"Lovelace-Ressource hinzugefügt: {CARD_URL_VERSIONED}")
 
         except ImportError as e:
             _LOGGER.info(f"Bitte Lovelace-Ressource manuell hinzufügen: {CARD_URL_PATH}")
