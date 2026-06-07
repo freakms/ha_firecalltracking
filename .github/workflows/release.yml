@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (z.B. 1.4.17)"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Update version in manifest.json
+        run: |
+          sed -i 's/"version": ".*"/"version": "${{ github.event.inputs.version }}"/' custom_components/einsatz_monitor/manifest.json
+
+      - name: Update version in card JS
+        run: |
+          sed -i 's/Version: [0-9]\+\.[0-9]\+\.[0-9]\+/Version: ${{ github.event.inputs.version }}/' custom_components/einsatz_monitor/www/einsatz-monitor-card.js
+          sed -i 's/v[0-9]\+\.[0-9]\+\.[0-9]\+ /v${{ github.event.inputs.version }} /g' custom_components/einsatz_monitor/www/einsatz-monitor-card.js
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add custom_components/einsatz_monitor/manifest.json custom_components/einsatz_monitor/www/einsatz-monitor-card.js
+          git diff --staged --quiet || git commit -m "Release ${{ github.event.inputs.version }}"
+          git push
+
+      - name: Zip custom component
+        run: |
+          cd custom_components
+          zip -r ../einsatz_monitor_${{ github.event.inputs.version }}.zip einsatz_monitor/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: v${{ github.event.inputs.version }}
+          body: |
+            ## Einsatz-Monitor v${{ github.event.inputs.version }}
+
+            ### Installation
+            1. ZIP entpacken und `einsatz_monitor` Ordner nach `custom_components/` kopieren
+            2. Home Assistant neu starten
+            3. Integration unter Einstellungen → Integrationen hinzufügen
+          files: einsatz_monitor_${{ github.event.inputs.version }}.zip
+          generate_release_notes: true
