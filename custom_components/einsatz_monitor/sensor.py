@@ -210,7 +210,6 @@ class EinsatzListSensor(EinsatzBaseSensor):
         super().__init__(coordinator, entry, "einsatz_liste")
         self._attr_name = "Letzte Einsätze"
         self._attr_icon = "mdi:format-list-bulleted"
-        self.entity_id = "sensor.letzte_einsatze"
 
     def _within_7_days(self, timestamp_str) -> bool:
         if not timestamp_str:
