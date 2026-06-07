@@ -1,41 +1,35 @@
 /**
  * Einsatz-Monitor Card for Home Assistant
- * Displays the last 5 incidents with color-coded rows
- * Version: 1.3.2
+ * Displays the last 4 incidents as a 2x2 grid with color-coded cards
+ * Version: 1.4.0
  */
 
 class EinsatzMonitorCard extends HTMLElement {
-  
-  // Called by Home Assistant when config changes
+
   setConfig(config) {
     if (!config) {
       throw new Error('Ungültige Konfiguration');
     }
-    
-    // Use Object.assign to properly handle HA's frozen config object
-    // This is the recommended pattern for HA 0.106+
+
     const defaultConfig = {
       entity: 'sensor.letzte_einsatze',
       title: 'Letzte Einsätze'
     };
-    
-    Object.assign(this, { 
-      config: Object.assign({}, defaultConfig, config) 
+
+    Object.assign(this, {
+      config: Object.assign({}, defaultConfig, config)
     });
   }
 
-  // Called by Home Assistant with state updates
   set hass(hass) {
     Object.assign(this, { _hass: hass });
     this._render();
   }
 
-  // Card size for layout
   getCardSize() {
     return 4;
   }
 
-  // Format timestamp to German format
   _formatTime(timestamp) {
     if (!timestamp) return '';
     try {
@@ -52,34 +46,98 @@ class EinsatzMonitorCard extends HTMLElement {
     }
   }
 
-  // Get icon and color based on incident type
   _getTypeInfo(type) {
     const types = {
       'fire': {
         icon: 'mdi:fire',
         color: '#ef4444',
-        bgColor: 'rgba(239, 68, 68, 0.15)'
+        bgColor: 'rgba(239, 68, 68, 0.12)',
+        borderColor: 'rgba(239, 68, 68, 0.4)'
       },
       'technical': {
         icon: 'mdi:car-emergency',
         color: '#3b82f6',
-        bgColor: 'rgba(59, 130, 246, 0.15)'
+        bgColor: 'rgba(59, 130, 246, 0.12)',
+        borderColor: 'rgba(59, 130, 246, 0.4)'
       },
       'hazmat': {
         icon: 'mdi:hazard-lights',
         color: '#f59e0b',
-        bgColor: 'rgba(245, 158, 11, 0.15)'
+        bgColor: 'rgba(245, 158, 11, 0.12)',
+        borderColor: 'rgba(245, 158, 11, 0.4)'
       }
     };
-    
+
     return types[type] || {
       icon: 'mdi:alert-circle',
       color: '#6b7280',
-      bgColor: 'rgba(107, 114, 128, 0.15)'
+      bgColor: 'rgba(107, 114, 128, 0.12)',
+      borderColor: 'rgba(107, 114, 128, 0.4)'
     };
   }
 
-  // Main render function
+  _renderGridItem(einsatz, index) {
+    const typeInfo = this._getTypeInfo(einsatz.type);
+    const keyword = einsatz.keyword || 'Unbekannt';
+    const vehicles = einsatz.vehicles || 'Keine Fahrzeuge';
+    const timeStr = this._formatTime(einsatz.timestamp);
+    const unit = einsatz.unit || '';
+
+    return `
+      <div style="
+        background: ${typeInfo.bgColor};
+        border: 1px solid ${typeInfo.borderColor};
+        border-top: 3px solid ${typeInfo.color};
+        border-radius: 10px;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        min-width: 0;
+      ">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div style="
+            background: ${typeInfo.color};
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+          ">
+            <ha-icon icon="${typeInfo.icon}" style="--mdc-icon-size: 20px; color: white;"></ha-icon>
+          </div>
+          <div style="
+            font-weight: 700;
+            font-size: 1em;
+            color: ${typeInfo.color};
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          ">${keyword}</div>
+        </div>
+
+        ${unit ? `
+          <div style="font-size: 0.78em; color: var(--secondary-text-color); display: flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            <ha-icon icon="mdi:office-building" style="--mdc-icon-size: 13px; flex-shrink: 0;"></ha-icon>
+            <span style="overflow: hidden; text-overflow: ellipsis;">${unit}</span>
+          </div>
+        ` : ''}
+
+        <div style="font-size: 0.82em; color: var(--primary-text-color); display: flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+          <ha-icon icon="mdi:truck" style="--mdc-icon-size: 13px; flex-shrink: 0;"></ha-icon>
+          <span style="overflow: hidden; text-overflow: ellipsis;">${vehicles}</span>
+        </div>
+
+        <div style="font-size: 0.75em; color: var(--secondary-text-color); display: flex; align-items: center; gap: 4px; margin-top: auto;">
+          <ha-icon icon="mdi:clock-outline" style="--mdc-icon-size: 13px; flex-shrink: 0;"></ha-icon>
+          ${timeStr}
+        </div>
+      </div>
+    `;
+  }
+
   _render() {
     if (!this._hass) return;
 
@@ -87,7 +145,6 @@ class EinsatzMonitorCard extends HTMLElement {
     const title = this.config.title || 'Letzte Einsätze';
     const stateObj = this._hass.states[entityId];
 
-    // Entity not found
     if (!stateObj) {
       this.innerHTML = `
         <ha-card header="${title}">
@@ -100,8 +157,8 @@ class EinsatzMonitorCard extends HTMLElement {
       return;
     }
 
-    // Get incidents from attributes
-    const einsaetze = stateObj.attributes.einsaetze || [];
+    const allEinsaetze = stateObj.attributes.einsaetze || [];
+    const einsaetze = allEinsaetze.slice(0, 4);
 
     let cardContent = '';
 
@@ -113,58 +170,16 @@ class EinsatzMonitorCard extends HTMLElement {
         </div>
       `;
     } else {
-      cardContent = einsaetze.map((einsatz) => {
-        const typeInfo = this._getTypeInfo(einsatz.type);
-        const keyword = einsatz.keyword || 'Unbekannt';
-        const vehicles = einsatz.vehicles || 'Keine Fahrzeuge';
-        const timeStr = this._formatTime(einsatz.timestamp);
-        const unit = einsatz.unit || '';
-        
-        return `
-          <div style="
-            background: ${typeInfo.bgColor};
-            border-left: 4px solid ${typeInfo.color};
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-          ">
-            <div style="
-              background: ${typeInfo.color};
-              border-radius: 50%;
-              width: 40px;
-              height: 40px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              flex-shrink: 0;
-            ">
-              <ha-icon icon="${typeInfo.icon}" style="--mdc-icon-size: 24px; color: white;"></ha-icon>
-            </div>
-            <div style="flex: 1; min-width: 0;">
-              <div style="font-weight: 600; font-size: 1.1em; color: ${typeInfo.color}; margin-bottom: 4px;">
-                ${keyword}
-              </div>
-              ${unit ? `
-                <div style="font-size: 0.85em; color: var(--secondary-text-color); margin-bottom: 4px;">
-                  <ha-icon icon="mdi:office-building" style="--mdc-icon-size: 14px;"></ha-icon>
-                  ${unit}
-                </div>
-              ` : ''}
-              <div style="font-size: 0.9em; color: var(--primary-text-color); margin-bottom: 4px;">
-                <ha-icon icon="mdi:truck" style="--mdc-icon-size: 14px;"></ha-icon>
-                ${vehicles}
-              </div>
-              <div style="font-size: 0.8em; color: var(--secondary-text-color);">
-                <ha-icon icon="mdi:clock-outline" style="--mdc-icon-size: 14px;"></ha-icon>
-                ${timeStr}
-              </div>
-            </div>
-          </div>
-        `;
-      }).join('');
+      const items = einsaetze.map((e, i) => this._renderGridItem(e, i)).join('');
+      cardContent = `
+        <div style="
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        ">
+          ${items}
+        </div>
+      `;
     }
 
     this.innerHTML = `
@@ -177,18 +192,16 @@ class EinsatzMonitorCard extends HTMLElement {
   }
 }
 
-// Register the card
 customElements.define('einsatz-monitor-card', EinsatzMonitorCard);
 
-// Register in custom cards list
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: 'einsatz-monitor-card',
   name: 'Einsatz-Monitor Card',
-  description: 'Zeigt die letzten Einsätze mit farblicher Kennzeichnung'
+  description: 'Zeigt die letzten 4 Einsätze im Grid-Design mit farblicher Kennzeichnung'
 });
 
-console.info('%c EINSATZ-MONITOR-CARD %c v1.3.2 ', 
-  'background: #ef4444; color: white; font-weight: bold;', 
+console.info('%c EINSATZ-MONITOR-CARD %c v1.4.0 ',
+  'background: #ef4444; color: white; font-weight: bold;',
   'background: #333; color: white;'
 );
